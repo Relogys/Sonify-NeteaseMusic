@@ -1,0 +1,70 @@
+name: Build Sonify Netease Music APK
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+  push:
+    branches:
+      - relogys-netease-music-version
+
+permissions:
+  contents: write
+
+jobs:
+  sync-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: relogys-netease-music-version
+
+      - name: Sync upstream master
+        run: |
+          git config user.name "Relogys"
+          git config user.email "155633226+Relogys@users.noreply.github.com"
+          git remote add upstream https://github.com/XiaoZhi0729/Sonify.git
+          git fetch upstream master
+          git merge --no-edit -X ours FETCH_HEAD
+          find .github/workflows -type f ! -name 'build-netease.yml' -delete
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Build debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug -PNETEase_API_BASE="${{ secrets.NETEase_API_BASE }}"
+          VERSION_NAME=$(sed -n 's/^APP_VERSION_NAME=\(.*\)$/\1/p' gradle.properties)
+          mv app/build/outputs/apk/debug/app-debug.apk \
+            "app/build/outputs/apk/debug/Sonify-NeteaseMusic-${VERSION_NAME}.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: Sonify-NeteaseMusic
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION_NAME=$(sed -n 's/^APP_VERSION_NAME=\(.*\)$/\1/p' gradle.properties)
+          TAG="v${VERSION_NAME}-netease-${GITHUB_RUN_NUMBER}"
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$APK" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Sonify 网易云音乐版 ${VERSION_NAME} (Build ${GITHUB_RUN_NUMBER})" \
+              --notes "由 GitHub Actions 自动构建；上游更新同步后生成。"
+          fi

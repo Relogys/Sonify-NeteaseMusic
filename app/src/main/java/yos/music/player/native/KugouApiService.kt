@@ -616,6 +616,9 @@ class KugouApiService private constructor() {
     //   轮询 GET /login/qr/check?key   -> data.status==4 时 token/userid/vip_token
 
     suspend fun loginQrKey(): Result<String> = withContext(Dispatchers.IO) {
+        if (NeteaseApiService.isConfigured()) {
+            return@withContext NeteaseApiService.loginQrKey()
+        }
         try {
             if (!ensureServer()) return@withContext Result.failure(Exception("本地服务未启动"))
             val (code, body) = qrGet("/login/qr/key", mapOf("timestamp" to System.currentTimeMillis().toString()))
@@ -634,6 +637,9 @@ class KugouApiService private constructor() {
 
     /** 返回 base64 PNG data URL（Rust 本地生成，login.rs:484-504）。 */
     suspend fun loginQrCreate(key: String): Result<String> = withContext(Dispatchers.IO) {
+        if (NeteaseApiService.isConfigured()) {
+            return@withContext NeteaseApiService.loginQrCreate(key)
+        }
         try {
             // ★必须自己兜一次：上一版只有 loginQrKey 调 ensureServer，
             //   冷启动时 key 那步侥幸通过、create 这步端口还没缓存 → 直接失败。
@@ -659,6 +665,25 @@ class KugouApiService private constructor() {
     /** 轮询检查。返回 data.status；status==4 时提取 token/userid 并保存（不写日志/UI）。 */
     suspend fun loginQrCheck(key: String): Result<Int> = withContext(Dispatchers.IO) {
         val loginExpected = authSnapshot()
+        if (NeteaseApiService.isConfigured()) {
+            val result = NeteaseApiService.loginQrCheckDetailed(key)
+                .getOrElse { return@withContext Result.failure(it) }
+            if (result.status == 803) {
+                YosDiagnostics.log("LOGIN_QR_NETEASE", "status" to result.status)
+            }
+            if (result.status == 803 || result.status == 4) {
+                val userid = result.userId
+                val cookie = result.cookie
+                if (!userid.isNullOrBlank() && !cookie.isNullOrBlank()) {
+                    authSession.loginIfCurrent(loginExpected, cookie, userid, "")
+                    YosDiagnostics.log(
+                        "LOGIN_QR_NETEASE", "status" to result.status,
+                        "userid" to true, "cookie" to true
+                    )
+                }
+            }
+            return@withContext Result.success(result.status)
+        }
         try {
             val (code, body) = qrGet("/login/qr/check", mapOf(
                 "key" to key,

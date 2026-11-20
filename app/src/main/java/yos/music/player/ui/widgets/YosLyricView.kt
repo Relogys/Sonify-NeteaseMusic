@@ -119,6 +119,7 @@ import yos.music.player.code.utils.lrc.effectiveLyricFontScale
 import yos.music.player.code.utils.lrc.lyricListStateKey
 import yos.music.player.code.utils.lrc.lyricMainTextStyle
 import yos.music.player.code.utils.lrc.lyricRenderKey
+import yos.music.player.code.utils.lrc.scaledLyricTranslationFontSizeSp
 import yos.music.player.code.utils.others.Vibrator
 import yos.music.player.data.libraries.SettingsLibrary
 import yos.music.player.data.objects.MainViewModelObject
@@ -485,7 +486,7 @@ fun YosLyricViewLib(
                     modifier = Modifier.fillMaxSize(),
                     normalLineTextStyle = style,
                     translationTextStyle = style.copy(
-                        fontSize = uiConfig.subTextSize.sp,
+                        fontSize = scaledLyricTranslationFontSizeSp(uiConfig.subTextSize, fontScaleSetting).sp,
                         fontWeight = FontWeight.Normal,
                     ),
                     accompanimentLineTextStyle = style.copy(fontSize = 22.sp),
@@ -495,14 +496,12 @@ fun YosLyricViewLib(
                     // 库里会给当前焦点行单独退回 SrcOver——扩展亮度已经超过 SDR 白，
                     // 再叠一层加色会把整行推过屏幕上限变成死白。
                     blendMode = if (SettingsLibrary.LyricHdrEffect) BlendMode.Plus else BlendMode.SrcOver,
-                    hdrBrush = hdrBrush,
-                    hdrBoost = hdrBoost,
                     useBlurEffect = blurLambda(),
                     showTranslation = translationLambda(),
                     showPhonetic = false,
                     anchor = LyricsAnchor.Fraction(LYRIC_ACTIVE_ANCHOR_FRACTION),
                     topFade = LyricsFade.ToAnchor(topFadeInset),
-                    bottomFade = LyricsFade.Fraction(0.5f),
+                    bottomFade = LyricsFade.Fraction(if (weightLambda()) 10f / 17f else 1f),
                     itemSpacing = 12.dp,
                     scrollAnimationSpec =
                         if (firstFollow) snap() else tween(650, easing = FastOutSlowInEasing),

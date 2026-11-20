@@ -212,6 +212,7 @@ import yos.music.player.code.MediaController.playingMusicList
 import yos.music.player.code.SystemMediaControlResolver
 import yos.music.player.code.VolumeChangeReceiver
 import yos.music.player.code.YosPlaybackService
+import yos.music.player.code.hdr.LyricHdr
 import yos.music.player.code.qualityLabelResOf
 import yos.music.player.code.utils.lrc.YosMediaEvent
 import yos.music.player.code.utils.lrc.YosUIConfig
@@ -1416,7 +1417,7 @@ internal fun NowPlaying(
                             // 槽位底边 = 本容器顶边 + 88dp = 原控件带顶边 + 36dp
                             // = 药丸原来的底边。于是收起态与改动前逐像素一致，
                             // 展开时向上长满槽位上方那 52dp——底边固定、只向上延伸。
-                            if (page == Lyric) {
+                            if (page == Lyric && controlMounted) {
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.TopEnd)
@@ -1430,7 +1431,7 @@ internal fun NowPlaying(
                                         },
                                     contentAlignment = Alignment.BottomCenter
                                 ) {
-                                    VocalSeparationPill()
+                                    VocalSeparationPill(enabled = controlVisible)
                                 }
                             }
                             // 外层控件带为了容纳药丸向上多留了 52dp，这里把它**钉回原尺寸
@@ -2669,6 +2670,9 @@ internal fun Lyric(
         modifier.fillMaxSize()
     ) {
         YosWrapper {
+            val lyricHdrEffect = SettingsLibrary.LyricHdrEffect
+            val lyricHdrStrength = SettingsLibrary.LyricHdrStrength
+            val extendedHdrActive = LyricHdr.isExtendedHdrActive(lyricHdrEffect, lyricHdrStrength)
 
             Spacer(
                 modifier = if (topSpacerWithStatusBar) {
@@ -2678,6 +2682,73 @@ internal fun Lyric(
                 }
             )
 
+            // mask 最外（节点坐标固定）→ clip 次之 → 滑动机最内：
+            // 内容滑出可视区域即被裁掉并按区域渐隐，层级不越过上下约束。
+            // 真 HDR 启用时不能套 8 位离屏 saveLayer（否则扩展亮度会被钳回 SDR 白）；
+            // 此时边缘渐隐交给 KaraokeLyricsView 内部通过逐行 ModulateAlpha 完成。
+            val lyricViewModifier = if (extendedHdrActive) {
+                Modifier
+                    .clipToBounds()
+                    .then(viewModifier)
+            } else {
+                Modifier
+                    .drawWithCache {
+                        val overlayPaint = Paint().apply {
+                            blendMode = if (lyricHdrEffect) BlendMode.Plus else BlendMode.SrcOver
+                        }
+                        val rect = Rect(0f, 0f, size.width, size.height)
+                        val topFadeEnd = lyricTopMaskEndPx(
+                            size.height, LYRIC_TOP_FADE_INSET_DP.dp.toPx(),
+                        )
+                        val topGradient = if (topFadeEnd > 0f) {
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black),
+                                startY = 0f,
+                                endY = topFadeEnd,
+                            )
+                        } else null
+                        val bottomGradient = if (weightLambda()) {
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black,
+                                    Color(0x59000000),
+                                    Color(0x21000000),
+                                    Color.Transparent,
+                                ),
+                                startY = size.height * (7f / 17f),
+                                endY = size.height * (10f / 17f),
+                            )
+                        } else {
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black,
+                                    Color(0x59000000),
+                                    Color(0x3F000000),
+                                    Color(0x21000000),
+                                    Color.Transparent,
+                                ),
+                                startY = size.height * (15f / 19f),
+                                endY = size.height,
+                            )
+                        }
+
+                        onDrawWithContent {
+                            val canvas = this.drawContext.canvas
+                            canvas.saveLayer(rect, overlayPaint)
+                            drawContent()
+                            topGradient?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
+                            bottomGradient?.let {
+                                drawRect(
+                                    brush = it,
+                                    blendMode = BlendMode.DstIn,
+                                )
+                            }
+                            canvas.restore()
+                        }
+                    }
+                    .clipToBounds()
+                    .then(viewModifier)
+            }
 
             YosLyricViewLib(
                 //mediaViewModel = mediaViewModel,
@@ -2702,65 +2773,7 @@ internal fun Lyric(
                     noLrcText = stringResource(id = R.string.tip_no_lyrics)
                 ),
                 weightLambda = weightLambda,
-                modifier = Modifier
-                    // mask 最外（节点坐标固定）→ clip 次之 → 滑动机最内：
-                    // 内容滑出可视区域即被裁掉并按区域渐隐，层级不越过上下约束
-                    .drawWithCache {
-                    val overlayPaint = Paint().apply {
-                        blendMode = BlendMode.Plus
-                    }
-                    val rect = Rect(0f, 0f, size.width, size.height)
-                    val topFadeEnd = lyricTopMaskEndPx(
-                        size.height, LYRIC_TOP_FADE_INSET_DP.dp.toPx(),
-                    )
-                    val topGradient = if (topFadeEnd > 0f) {
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black),
-                            startY = 0f,
-                            endY = topFadeEnd,
-                        )
-                    } else null
-                    val bottomGradient = if (weightLambda()) {
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.Black,
-                                Color(0x59000000),
-                                Color(0x21000000),
-                                Color.Transparent,
-                            ),
-                            startY = size.height * (7f / 17f),
-                            endY = size.height * (10f / 17f),
-                        )
-                    } else {
-                        Brush.verticalGradient(
-                            listOf(
-                                Color.Black,
-                                Color(0x59000000),
-                                Color(0x3F000000),
-                                Color(0x21000000),
-                                Color.Transparent,
-                            ),
-                            startY = size.height * (15f / 19f),
-                            endY = size.height,
-                        )
-                    }
-
-                    onDrawWithContent {
-                        val canvas = this.drawContext.canvas
-                        canvas.saveLayer(rect, overlayPaint)
-                        drawContent()
-                        topGradient?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
-                        bottomGradient?.let {
-                            drawRect(
-                                brush = it,
-                                blendMode = BlendMode.DstIn,
-                            )
-                        }
-                        canvas.restore()
-                    }
-                }
-                    .clipToBounds()
-                    .then(viewModifier),
+                modifier = lyricViewModifier,
                 onBackClick = onBackClick,
                 lastLineObstructionFraction = lastLineObstructionFraction
             )
